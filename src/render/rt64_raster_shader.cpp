@@ -230,6 +230,7 @@ namespace RT64 {
         creation.zCmp = !copyMode && desc.otherMode.zCmp() && (desc.otherMode.zMode() != ZMODE_DEC);
         creation.zUpd = !copyMode && desc.otherMode.zUpd();
         creation.cvgAdd = (desc.otherMode.cvgDst() == CVG_DST_WRAP) || (desc.otherMode.cvgDst() == CVG_DST_SAVE);
+        creation.additiveBlend = !copyMode && interop::Blender::usesAdditiveFramebuffer(desc.otherMode);
         creation.NoN = desc.flags.NoN;
         creation.usesHDR = desc.flags.usesHDR;
 #ifdef __APPLE__
@@ -335,6 +336,14 @@ namespace RT64 {
             targetBlend.blendEnabled = true;
             targetBlend.srcBlend = RenderBlend::SRC1_ALPHA;
             targetBlend.dstBlend = RenderBlend::INV_SRC1_ALPHA;
+            targetBlend.blendOp = RenderBlendOperation::ADD;
+        }
+
+        // 40winks: P * A + FRAMEBUFFER * ONE, the shader already multiplied P by A.
+        if (c.additiveBlend) {
+            targetBlend.blendEnabled = true;
+            targetBlend.srcBlend = RenderBlend::ONE;
+            targetBlend.dstBlend = RenderBlend::ONE;
             targetBlend.blendOp = RenderBlendOperation::ADD;
         }
 
@@ -478,6 +487,7 @@ namespace RT64 {
             creation.zCmp = i & (1 << 0);
             creation.zUpd = i & (1 << 1);
             creation.cvgAdd = i & (1 << 2);
+            creation.additiveBlend = i & (1 << 3);
 
             pipelineThreadCreations[threadIndex].emplace_back(creation);
             threadIndex = (threadIndex + 1) % threadCount;
@@ -570,7 +580,7 @@ namespace RT64 {
         }
 
         for (const PipelineCreation &creation : pipelineThreadCreations[threadIndex]) {
-            uint32_t pipelineIndex = pipelineStateIndex(creation.zCmp, creation.zUpd, creation.cvgAdd);
+            uint32_t pipelineIndex = pipelineStateIndex(creation.zCmp, creation.zUpd, creation.cvgAdd, creation.additiveBlend);
 
             if (pipelineIndex == 0) {
                 firstPipelineMutex.lock();
@@ -598,14 +608,15 @@ namespace RT64 {
         }
     }
 
-    uint32_t RasterShaderUber::pipelineStateIndex(bool zCmp, bool zUpd, bool cvgAdd) const {
+    uint32_t RasterShaderUber::pipelineStateIndex(bool zCmp, bool zUpd, bool cvgAdd, bool additiveBlend) const {
         return
             (uint32_t(zCmp)         << 0) |
             (uint32_t(zUpd)         << 1) |
-            (uint32_t(cvgAdd)       << 2);
+            (uint32_t(cvgAdd)       << 2) |
+            (uint32_t(additiveBlend) << 3);
     }
 
-    const RenderPipeline *RasterShaderUber::getPipeline(bool zCmp, bool zUpd, bool cvgAdd) const {
-        return pipelines[pipelineStateIndex(zCmp, zUpd, cvgAdd)].get();
+    const RenderPipeline *RasterShaderUber::getPipeline(bool zCmp, bool zUpd, bool cvgAdd, bool additiveBlend) const {
+        return pipelines[pipelineStateIndex(zCmp, zUpd, cvgAdd, additiveBlend)].get();
     }
 };

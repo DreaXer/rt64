@@ -147,6 +147,7 @@ namespace RT64 {
             bool postBlendNoise;
             bool postBlendNoiseNegative;
             uint32_t maxGameCall;
+            float curFrameWeight = 1.0f; // 40winks: rect interpolation (GameCall::rectLerpDesc).
         };
 
         FramebufferRenderer(RenderWorker *worker, bool rtSupport, UserConfiguration::GraphicsAPI graphicsAPI, const ShaderLibrary *shaderLibrary);

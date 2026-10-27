@@ -35,5 +35,11 @@ namespace RT64 {
             CallMatchCallback *matchCallback; // FIXME: This only supports one match callback active at a time per draw call.
 #       endif
         } lerpDesc;
+
+        // 40winks: offset (10.2 fixed point) from this rect to the matched rect of the previous frame, see GameFrame::match.
+        struct {
+            int32_t dx = 0;
+            int32_t dy = 0;
+        } rectLerpDesc;
     };
 };

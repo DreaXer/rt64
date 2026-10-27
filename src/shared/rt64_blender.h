@@ -119,6 +119,24 @@ namespace interop {
             return false;
         }
         
+        // 40winks: last cycle is P * A + FRAMEBUFFER * ONE (additive light layers of 40 Winks, render mode 0xC9124F50).
+        // The SRC1_ALPHA / INV_SRC1_ALPHA blend can't add to the framebuffer: these use a ONE / ONE pipeline instead.
+        static bool usesAdditiveFramebuffer(const OtherMode otherMode) {
+            const uint ccCount = combineCycleCount(otherMode);
+            if (!otherMode.forceBlend() || (ccCount == 0)) {
+                return false;
+            }
+
+            const uint blenderInputs = otherMode.blenderInputs();
+            if ((ccCount >= 2) && ((decodeInputP(blenderInputs, false) == PM_FRAMEBUFFER_COLOR) || (decodeInputM(blenderInputs, false) == PM_FRAMEBUFFER_COLOR))) {
+                return false;
+            }
+
+            const bool secondCycle = (ccCount >= 2);
+            return (decodeInputP(blenderInputs, secondCycle) != PM_FRAMEBUFFER_COLOR) && (decodeInputM(blenderInputs, secondCycle) == PM_FRAMEBUFFER_COLOR) &&
+                (decodeInputA(blenderInputs, secondCycle) != A_ZERO) && (decodeInputB(blenderInputs, secondCycle) == B_ONE);
+        }
+
         static bool usesAlphaBlend(const OtherMode otherMode) {
             const bool forceBlend = otherMode.forceBlend();
             const uint ccCount = combineCycleCount(otherMode);
@@ -499,6 +517,12 @@ namespace interop {
                 runCycle(
                     inputs, forceBlend, true, true, combinerColor, P1, M1, A1, B1,
                     passthroughEnabled, passthroughInput, blenderColor, finalAlpha);
+            }
+
+            // 40winks: the ONE / ONE pipeline adds the output as is, so apply the A factor here.
+            if (usesAdditiveFramebuffer(otherMode)) {
+                blenderColor *= finalAlpha;
+                finalAlpha = 1.0f;
             }
 
             return float4(blenderColor, finalAlpha);

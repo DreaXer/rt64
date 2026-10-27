@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <atomic>
+
 #include "common/rt64_user_configuration.h"
 #include "hle/rt64_vi.h"
 
@@ -11,6 +13,9 @@
 #include "rt64_shader_library.h"
 
 namespace RT64 {
+    // 40winks: launcher's Film Grain option (set by src/main/main.cpp). Off also removes RT64's RDP noise dither.
+    extern std::atomic<bool> filmGrainEnabled;
+
     struct VIRenderer {
         std::unique_ptr<VideoInterfaceDescriptorSet> descriptorSet;
         const RenderSampler *descriptorSetSampler = nullptr;

@@ -50,6 +50,7 @@ namespace RT64 {
         bool zCmp;
         bool zUpd;
         bool cvgAdd;
+        bool additiveBlend = false; // 40winks: ONE / ONE blend (Blender::usesAdditiveFramebuffer).
         bool usesHDR;
         std::vector<RenderSpecConstant> specConstants;
         RenderMultisampling multisampling;
@@ -78,7 +79,7 @@ namespace RT64 {
         static const uint64_t RasterVSLibraryHash;
         static const uint64_t RasterPSLibraryHash;
 
-        std::unique_ptr<RenderPipeline> pipelines[8];
+        std::unique_ptr<RenderPipeline> pipelines[16];
         std::unique_ptr<RenderPipeline> postBlendDitherNoiseAddPipeline;
         std::unique_ptr<RenderPipeline> postBlendDitherNoiseSubPipeline;
         std::unique_ptr<RenderPipeline> postBlendDitherNoiseSubNegativePipeline;
@@ -95,7 +96,7 @@ namespace RT64 {
         ~RasterShaderUber();
         void threadCreatePipelines(uint32_t threadIndex);
         void waitForPipelineCreation();
-        uint32_t pipelineStateIndex(bool zCmp, bool zUpd, bool cvgAdd) const;
-        const RenderPipeline *getPipeline(bool zCmp, bool zUpd, bool cvgAdd) const;
+        uint32_t pipelineStateIndex(bool zCmp, bool zUpd, bool cvgAdd, bool additiveBlend) const;
+        const RenderPipeline *getPipeline(bool zCmp, bool zUpd, bool cvgAdd, bool additiveBlend) const;
     };
 };

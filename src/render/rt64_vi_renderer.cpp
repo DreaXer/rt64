@@ -8,6 +8,8 @@
 #include "shared/rt64_video_interface.h"
 
 namespace RT64 {
+    std::atomic<bool> filmGrainEnabled = true;
+
     // VIRenderer
 
     VIRenderer::VIRenderer() { }
@@ -77,6 +79,14 @@ namespace RT64 {
         pushConstants.videoResolution = computeHDSize(hlslpp::float2(p.vi->fbSize()), p.resolutionScale, p.downsamplingScale);
         pushConstants.textureResolution = { float(p.textureWidth), float(p.textureHeight) };
         pushConstants.gamma = p.vi->gamma();
+        // 40winks: the game keeps the VI gamma dither bit on. Real hardware only adds 0 or 1/255 there; the grain drawn
+        // instead is the RDP noise dither seen on the boot screen, extended to the whole game.
+        static uint32_t grainSeed = 0;
+        const hlslpp::float2 fbSize = hlslpp::float2(p.vi->fbSize());
+        pushConstants.filmGrain = (filmGrainEnabled && p.vi->status.gammaDitherEnable) ? 1 : 0;
+        pushConstants.grainSeed = grainSeed++;
+        pushConstants.fbWidth = float(fbSize.x);
+        pushConstants.fbHeight = float(fbSize.y);
 
         p.commandList->setPipeline(shader->pipeline.get());
         p.commandList->setGraphicsPipelineLayout(shader->pipelineLayout.get());
@@ -100,7 +110,16 @@ namespace RT64 {
         // on the screen. To work around that, the viewport the buffer will be drawn in will be expanded so only
         // the region of interest is rendered. A scissor will cut it off correctly according to the coordinates
         // specified by the VI.
-        const hlslpp::float2 sdSize = removeBlackBorders ? hlslpp::float2(vi.fbSize()) : hlslpp::float2(320.0f, 240.0f);
+        hlslpp::float2 sdSize = removeBlackBorders ? hlslpp::float2(vi.fbSize()) : hlslpp::float2(320.0f, 240.0f);
+
+        // 40winks: a 320x480 (or 640x240) framebuffer still fills a 4:3 TV. Halve the high-res axis so the
+        // presentation keeps that aspect instead of the framebuffer's (the main menu was squashed horizontally).
+        if (sdSize.y > 300.0f) {
+            sdSize.y /= 2.0f;
+        }
+        if (sdSize.x > 400.0f) {
+            sdSize.x /= 2.0f;
+        }
         const hlslpp::float2 hdSize = computeHDSize(sdSize, resolutionScale, downsamplingScale);
         const hlslpp::float2 windowSize = { float(swapChain->getWidth()), float(swapChain->getHeight()) };
 

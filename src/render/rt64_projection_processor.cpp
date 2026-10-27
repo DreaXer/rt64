@@ -94,7 +94,11 @@ namespace RT64 {
                 if (!intersectionRect.isEmpty()) {
                     bool coversWholeWidth = (intersectionRect.ulx <= fbPair.scissorRect.ulx) && (intersectionRect.lrx >= fbPair.scissorRect.lrx);
                     bool horizontalRatio = (intersectionRect.width(true, true) > intersectionRect.height(true, true));
-                    adjustAspectRatio = (viewportOrigin == G_EX_ORIGIN_NONE) && coversWholeWidth && horizontalRatio;
+                    // 40winks: same 2P split view rule as useWideViewport in FramebufferRenderer.
+                    bool coversWholeHeight = (intersectionRect.uly <= fbPair.scissorRect.uly) && (intersectionRect.lry >= fbPair.scissorRect.lry);
+                    bool touchesSide = (intersectionRect.ulx <= fbPair.scissorRect.ulx) || (intersectionRect.lrx >= fbPair.scissorRect.lrx);
+                    bool splitView = coversWholeHeight && touchesSide && !coversWholeWidth;
+                    adjustAspectRatio = (viewportOrigin == G_EX_ORIGIN_NONE) && ((coversWholeWidth && horizontalRatio) || splitView);
                 }
             }
  

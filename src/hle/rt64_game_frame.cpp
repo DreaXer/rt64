@@ -8,10 +8,129 @@
 #include "rt64_workload_queue.h"
 
 #include "xxHash/xxh3.h"
+#include <cstdio>
+#include <cstdlib>
 
 namespace RT64 {
+    // 40winks: rectangle interpolation. Rects (G_TEXRECT / G_FILLRECT) have no transform, so RT64 never moves them between
+    // frames. Match each rect call with the previous frame's rect calls of the same framebuffer pair, in submission order
+    // (same size, shader and textures, moved by at most MaxDelta), and store the offset back to the previous position.
+    // The textures matter: letters, digits and sprite strips are often all the same size. The framebuffer renderer moves
+    // the rect by that offset times (1 - curFrameWeight), in whole pixels.
+    static uint64_t rectTextureKey(const Workload &workload, const GameCall &call) {
+        uint64_t key = call.callDesc.tileCount;
+        for (uint32_t t = 0; t < call.callDesc.tileCount; t++) {
+            key = key * 1099511628211ULL ^ workload.drawData.callTiles[call.callDesc.tileIndex + t].tmemHashOrID;
+        }
+
+        return key;
+    }
+
+    // 40winks debug: with the WINKS_RECT_TRACE environment variable set, writes rect_trace.txt (current directory), one
+    // block per matched frame (each 2D call: projection, rect, texture / shader hashes, matched offset, matrix group id),
+    // and stops at 200 MB.
+    static FILE *rectTrace() {
+        static FILE *file = (getenv("WINKS_RECT_TRACE") != nullptr) ? fopen("rect_trace.txt", "w") : nullptr;
+        if ((file != nullptr) && (ftell(file) > 200 * 1024 * 1024)) {
+            return nullptr;
+        }
+
+        return file;
+    }
+
+    static const char *projTypeName(Projection::Type type) {
+        switch (type) {
+        case Projection::Type::Perspective: return "persp";
+        case Projection::Type::Orthographic: return "ortho";
+        case Projection::Type::Rectangle: return "rect";
+        case Projection::Type::Triangle: return "tri";
+        default: return "none";
+        }
+    }
+
+    static void matchRects(Workload &curWorkload, const Workload &prevWorkload) {
+        constexpr int32_t MaxDelta = 64 * 4;
+        constexpr size_t SearchWindow = 8;
+        thread_local std::vector<const GameCall *> prevRects;
+        static uint32_t traceFrame = 0;
+        FILE *trace = rectTrace();
+        if (trace != nullptr) {
+            fprintf(trace, "==== frame %u\n", traceFrame++);
+        }
+
+        for (uint32_t f = 0; f < curWorkload.fbPairCount; f++) {
+            prevRects.clear();
+            if (f < prevWorkload.fbPairCount) {
+                const FramebufferPair &prevPair = prevWorkload.fbPairs[f];
+                for (uint32_t p = 0; p < prevPair.projectionCount; p++) {
+                    const Projection &proj = prevPair.projections[p];
+                    if (proj.type == Projection::Type::Rectangle) {
+                        for (uint32_t c = 0; c < proj.gameCallCount; c++) {
+                            prevRects.push_back(&proj.gameCalls[c]);
+                        }
+                    }
+                }
+            }
+
+            size_t cursor = 0;
+            FramebufferPair &curPair = curWorkload.fbPairs[f];
+            for (uint32_t p = 0; p < curPair.projectionCount; p++) {
+                Projection &proj = curPair.projections[p];
+                if (trace != nullptr) {
+                    fprintf(trace, "fb %u (addr %08X width %u) proj %u %s calls %u\n", f, curPair.colorImage.address,
+                        curPair.colorImage.width, p, projTypeName(proj.type), proj.gameCallCount);
+                    if (proj.type != Projection::Type::Rectangle) {
+                        for (uint32_t c = 0; c < proj.gameCallCount; c++) {
+                            const GameCall &call = proj.gameCalls[c];
+                            const DrawData &dd = curWorkload.drawData;
+                            const uint32_t minM = call.callDesc.minWorldMatrix, maxM = call.callDesc.maxWorldMatrix;
+                            const uint32_t idMin = (minM < dd.worldTransformGroups.size()) ? dd.transformGroups[dd.worldTransformGroups[minM]].matrixId : 0xDEADDEAD;
+                            fprintf(trace, "  call %u tris %u mtx %u-%u group %08X tex %016llX shader %016llX\n", c, call.callDesc.triangleCount,
+                                minM, maxM, idMin, (unsigned long long)rectTextureKey(curWorkload, call), (unsigned long long)call.shaderDesc.hash());
+                        }
+                    }
+                }
+
+                if (proj.type != Projection::Type::Rectangle) {
+                    continue;
+                }
+
+                for (uint32_t c = 0; c < proj.gameCallCount; c++) {
+                    GameCall &call = proj.gameCalls[c];
+                    call.rectLerpDesc.dx = 0;
+                    call.rectLerpDesc.dy = 0;
+                    const FixedRect &r = call.callDesc.rect;
+                    const uint64_t shaderHash = call.shaderDesc.hash();
+                    const uint64_t textureKey = rectTextureKey(curWorkload, call);
+                    const size_t searchEnd = std::min(prevRects.size(), cursor + SearchWindow);
+                    for (size_t i = cursor; i < searchEnd; i++) {
+                        // A sprite strip that crosses the left or top edge of the screen is cut at 0 and changes size
+                        // while it moves: measure the offset on its opposite edge, which is not cut.
+                        const FixedRect &q = prevRects[i]->callDesc.rect;
+                        const bool cutX = ((q.lrx - q.ulx) != (r.lrx - r.ulx)) && ((q.ulx == 0) || (r.ulx == 0));
+                        const bool cutY = ((q.lry - q.uly) != (r.lry - r.uly)) && ((q.uly == 0) || (r.uly == 0));
+                        const int32_t dx = cutX ? (q.lrx - r.lrx) : (q.ulx - r.ulx);
+                        const int32_t dy = cutY ? (q.lry - r.lry) : (q.uly - r.uly);
+                        const bool sameSize = (cutX || ((q.lrx - q.ulx) == (r.lrx - r.ulx))) && (cutY || ((q.lry - q.uly) == (r.lry - r.uly)));
+                        if (sameSize && (abs(dx) <= MaxDelta) && (abs(dy) <= MaxDelta) && (prevRects[i]->shaderDesc.hash() == shaderHash) && (rectTextureKey(prevWorkload, *prevRects[i]) == textureKey)) {
+                            call.rectLerpDesc.dx = dx;
+                            call.rectLerpDesc.dy = dy;
+                            cursor = i + 1;
+                            break;
+                        }
+                    }
+
+                    if (trace != nullptr) {
+                        fprintf(trace, "  call %u rect (%d,%d)-(%d,%d) tex %016llX shader %016llX -> d (%d,%d)\n", c, r.ulx, r.uly, r.lrx, r.lry,
+                            (unsigned long long)textureKey, (unsigned long long)shaderHash, call.rectLerpDesc.dx, call.rectLerpDesc.dy);
+                    }
+                }
+            }
+        }
+    }
+
     // GameFrame
-    
+
     bool GameFrame::areFramebufferPairsCompatible(const WorkloadQueue &workloadQueue, const GameIndices::FramebufferPair &first, const GameIndices::FramebufferPair &second) {
         if (first == second) {
             return true;
@@ -272,6 +391,7 @@ namespace RT64 {
 
             Workload &curWorkload = workloadQueue.workloads[workloads[w]];
             const Workload &prevWorkload = workloadQueue.workloads[workloadMap.prevWorkloadIndex];
+            matchRects(curWorkload, prevWorkload);
             workloadMap.viewProjections.clear();
             workloadMap.viewProjections.resize(curWorkload.drawData.viewProjTransforms.size());
             workloadMap.transforms.clear();

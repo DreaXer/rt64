@@ -7,6 +7,7 @@
 #include <cassert>
 #include <stdio.h>
 #include <SDL.h>
+#include <SDL_syswm.h>
 
 #if defined(_WIN32)
 #   include <Windows.h>
@@ -65,7 +66,21 @@ namespace RT64 {
                 // until much later. Instead, we delegate this to the first time a screen update is sent.
                 // FIXME: We attempt to get the first window created by SDL2. This can be improved later
                 // by actually passing the SDL_Window handle through as a parameter.
+#           ifdef _WIN32
+                // 40winks: SDL window ID 1 is not always the game window (F1 / inspector never worked). Pick the
+                // SDL window that wraps our HWND instead.
+                for (Uint32 id = 1; (id < 64) && (sdlWindow == nullptr); id++) {
+                    SDL_Window *candidate = SDL_GetWindowFromID(id);
+                    SDL_SysWMinfo wmInfo;
+                    SDL_VERSION(&wmInfo.version);
+                    if ((candidate != nullptr) && SDL_GetWindowWMInfo(candidate, &wmInfo) && (wmInfo.info.win.window == window)) {
+                        sdlWindow = candidate;
+                    }
+                }
+                fprintf(stdout, "[rt64] developer mode: SDL window %s\n", (sdlWindow != nullptr) ? "found" : "not found, using window hook");
+#           else
                 sdlWindow = SDL_GetWindowFromID(1);
+#           endif
             }
 
             if (sdlWindow == nullptr) {

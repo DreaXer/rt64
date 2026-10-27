@@ -133,6 +133,15 @@ namespace RT64 {
         // Compute the aspect ratio to be used for the frame.
         workloadConfig.aspectRatioSource = (viFbSize[1] > 0) ? float(viFbSize[0]) / float(viFbSize[1]) : (4.0f / 3.0f);
 
+        // 40winks: a 320x480 (or 640x240) framebuffer still fills a 4:3 TV (same rule as VIRenderer::getViewportAndScissor).
+        // Without this, Expand widens the main menu twice too much and the VI shrinks it to fit the window.
+        if (viFbSize[1] > 300) {
+            workloadConfig.aspectRatioSource *= 2.0f;
+        }
+        if (viFbSize[0] > 400) {
+            workloadConfig.aspectRatioSource /= 2.0f;
+        }
+
         const auto ratioMode = ext.sharedResources->userConfig.aspectRatio;
         switch (ratioMode) {
         case UserConfiguration::AspectRatio::Expand:
@@ -639,6 +648,7 @@ namespace RT64 {
                     drawParams.postBlendNoise = workloadConfig.postBlendNoise;
                     drawParams.postBlendNoiseNegative = workloadConfig.postBlendNoiseNegative;
                     drawParams.maxGameCall = std::min(gameCallCountMax - gameCallCursor, fbPair.gameCallCount);
+                    drawParams.curFrameWeight = curFrameWeight;
                     framebufferRenderer->addFramebuffer(drawParams);
                 }
                 

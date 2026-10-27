@@ -15,6 +15,7 @@
 
 #include "rt64_descriptor_sets.h"
 #include "rt64_render_worker.h"
+#include "rt64_vi_renderer.h"
 
 // TODO: Move to shared.
 
@@ -1432,7 +1433,16 @@ namespace RT64 {
         targetDrawCall.sceneIndices.clear();
 
         const float SimilarityPercentage = 0.1f; // TODO: Make more strict once VI ratios are in.
-        const float scissorRatio = static_cast<float>(fbPair.scissorRect.width(false, true)) / static_cast<float>(fbPair.scissorRect.height(false, true));
+        float scissorRatio = static_cast<float>(fbPair.scissorRect.width(false, true)) / static_cast<float>(fbPair.scissorRect.height(false, true));
+
+        // 40winks: same rule as aspectRatioSource in WorkloadQueue::threadConfigurationUpdate (320x480 fills a 4:3 TV),
+        // or the main menu is not adjusted and comes out stretched.
+        if (fbPair.scissorRect.height(false, true) > 300) {
+            scissorRatio *= 2.0f;
+        }
+        if (fbPair.scissorRect.width(false, true) > 400) {
+            scissorRatio /= 2.0f;
+        }
         const bool adjustRatio = (abs((scissorRatio / p.aspectRatioSource) - 1.0f) < SimilarityPercentage);
         const float aspectRatioScale = adjustRatio ? (p.aspectRatioTarget / p.aspectRatioSource) : 1.0f;
         InstanceDrawCall instanceDrawCall;
@@ -1490,7 +1500,12 @@ namespace RT64 {
                 FixedRect intersectionRect = proj.scissorRect.intersection(viewport.rect(viewportClipRatios));
                 bool coversWholeWidth = !intersectionRect.isEmpty() && (intersectionRect.ulx <= fbPair.scissorRect.ulx) && (intersectionRect.lrx >= fbPair.scissorRect.lrx);
                 bool horizontalRatio = !intersectionRect.isEmpty() && (intersectionRect.width(true, true) > intersectionRect.height(true, true));
-                bool useWideViewport = (viewportOrigin == G_EX_ORIGIN_NONE) && coversWholeWidth && horizontalRatio;
+                // 40winks: the 2P split screen views (160x240 each, full height, against the left or right edge) are widened
+                // too. Scaled around the screen center, each one then fills its half of the wide screen.
+                bool coversWholeHeight = !intersectionRect.isEmpty() && (intersectionRect.uly <= fbPair.scissorRect.uly) && (intersectionRect.lry >= fbPair.scissorRect.lry);
+                bool touchesSide = (intersectionRect.ulx <= fbPair.scissorRect.ulx) || (intersectionRect.lrx >= fbPair.scissorRect.lrx);
+                bool splitView = coversWholeHeight && touchesSide && !coversWholeWidth;
+                bool useWideViewport = (viewportOrigin == G_EX_ORIGIN_NONE) && ((coversWholeWidth && horizontalRatio) || splitView);
                 if (useWideViewport) {
                     projInvRatioScale = 1.0f;
                 }
@@ -1616,7 +1631,8 @@ namespace RT64 {
                             triangles.pipeline = rasterShaderUber->getPipeline(
                                 !copyMode && call.shaderDesc.otherMode.zCmp() && (call.shaderDesc.otherMode.zMode() != ZMODE_DEC),
                                 !copyMode && call.shaderDesc.otherMode.zUpd(),
-                                (call.shaderDesc.otherMode.cvgDst() == CVG_DST_WRAP) || (call.shaderDesc.otherMode.cvgDst() == CVG_DST_SAVE));
+                                (call.shaderDesc.otherMode.cvgDst() == CVG_DST_WRAP) || (call.shaderDesc.otherMode.cvgDst() == CVG_DST_SAVE),
+                                !copyMode && interop::Blender::usesAdditiveFramebuffer(call.shaderDesc.otherMode)); // 40winks
                         }
                         
                         triangles.faceCount = call.callDesc.triangleCount;
@@ -1652,12 +1668,26 @@ namespace RT64 {
                                 horizontalMisalignment = p.horizontalMisalignment;
                             }
 
-                            RenderViewport viewportRect = convertViewportRect(call.callDesc.rect, p.resolutionScale, p.fbWidth, invRatioScale, extOriginPercentage, horizontalMisalignment, call.callDesc.rectLeftOrigin, call.callDesc.rectRightOrigin);
+                            // 40winks: move the rect towards its position in the previous frame (GameFrame::match), by whole
+                            // pixels (multiples of 4 in 10.2): the rect's texcoords were set up for its integer position, a
+                            // fractional move shows seams between the strips of a sprite.
+                            FixedRect lerpRect = call.callDesc.rect;
+                            // Same weight as RT64's tile interpolation: curFrameWeight goes from 0 (previous frame) to 1.
+                            const float towardsPrev = 1.0f - p.curFrameWeight;
+                            const int32_t lerpX = int32_t(lroundf(call.rectLerpDesc.dx * towardsPrev / 4.0f)) * 4;
+                            const int32_t lerpY = int32_t(lroundf(call.rectLerpDesc.dy * towardsPrev / 4.0f)) * 4;
+                            lerpRect.ulx += lerpX;
+                            lerpRect.lrx += lerpX;
+                            lerpRect.uly += lerpY;
+                            lerpRect.lry += lerpY;
+
+                            RenderViewport viewportRect = convertViewportRect(lerpRect, p.resolutionScale, p.fbWidth, invRatioScale, extOriginPercentage, horizontalMisalignment, call.callDesc.rectLeftOrigin, call.callDesc.rectRightOrigin);
                             triangles.screenScale = { viewportRect.width / framebuffer.viewport.width, viewportRect.height / framebuffer.viewport.height };
                             triangles.screenOffset.x = halfPixelOffset.x + ((viewportRect.x + viewportRect.width / 2.0f) - halfViewportSize.x) / halfViewportSize.x;
                             triangles.screenOffset.y = halfPixelOffset.y + (halfViewportSize.y - (viewportRect.y + viewportRect.height / 2.0f)) / halfViewportSize.y;
 
-                            if (p.postBlendNoise) {
+                            // 40winks: the Film Grain option also controls the RDP noise dither (boot screen).
+                            if (p.postBlendNoise && filmGrainEnabled) {
                                 // Indicate if post blend dither noise should be applied.
                                 bool rgbDitherNoise = (call.shaderDesc.otherMode.rgbDither() == G_CD_NOISE);
                                 triangles.postBlendDitherNoise = rgbDitherNoise && !call.shaderDesc.otherMode.zCmp() && !call.shaderDesc.otherMode.zUpd();

@@ -4,6 +4,8 @@
 
 #include "shared/rt64_video_interface.h"
 
+#include "Random.hlsli"
+
 [[vk::push_constant]] ConstantBuffer<VideoInterfaceCB> gConstants : register(b0);
 Texture2D<float4> gInput : register(t1);
 SamplerState gSampler : register(s2);
@@ -16,7 +18,15 @@ float4 SampleInput(float2 uv) {
     float2 outsideBorder = step(LowerRight, uv);
     float4 sampledColor = gInput.SampleLevel(gSampler, clamp(uv, HalfPixel, LowerRight - HalfPixel), 0);
     float4 gammaCorrectedColor = pow(sampledColor, gConstants.gamma);
-    gammaCorrectedColor.rgb *= max(1.0f - outsideBorder.x - outsideBorder.y, 0.0f);
+    if (gConstants.filmGrain != 0) {
+        // 40winks: film grain. One random value per N64 pixel and per frame, with the amplitude of the RDP's noise
+        // dither in a 16-bit framebuffer (the 3 bits below the 5-bit color, 7/255), centered so brightness is unchanged.
+        uint2 sdPixel = uint2(uv * gConstants.textureResolution / gConstants.videoResolution * float2(gConstants.fbWidth, gConstants.fbHeight));
+        uint randomSeed = initRand(gConstants.grainSeed, sdPixel.y * 65536 + sdPixel.x, 16);
+        const float Range = 7.0f / 255.0f;
+        gammaCorrectedColor.rgb += (float3(nextRand(randomSeed), nextRand(randomSeed), nextRand(randomSeed)) - 0.5f) * Range;
+    }
+    gammaCorrectedColor.rgb *=max(1.0f - outsideBorder.x - outsideBorder.y, 0.0f);
     gammaCorrectedColor.a = 1.0f;
     return gammaCorrectedColor;
 }
