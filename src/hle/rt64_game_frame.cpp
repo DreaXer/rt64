@@ -99,9 +99,14 @@ namespace RT64 {
                     GameCall &call = proj.gameCalls[c];
                     call.rectLerpDesc.dx = 0;
                     call.rectLerpDesc.dy = 0;
+                    call.rectLerpDesc.dx2 = 0;
+                    call.rectLerpDesc.dy2 = 0;
                     const FixedRect &r = call.callDesc.rect;
                     const uint64_t shaderHash = call.shaderDesc.hash();
                     const uint64_t textureKey = rectTextureKey(curWorkload, call);
+                    // A rect whose combiner samples no texture (plain colored box, e.g. the pause window that opens) can
+                    // change size: each corner is interpolated on its own.
+                    const bool untextured = !call.shaderDesc.flags.usesTexture0 && !call.shaderDesc.flags.usesTexture1;
                     const size_t searchEnd = std::min(prevRects.size(), cursor + SearchWindow);
                     for (size_t i = cursor; i < searchEnd; i++) {
                         // A sprite strip that crosses the left or top edge of the screen is cut at 0 and changes size
@@ -112,9 +117,15 @@ namespace RT64 {
                         const int32_t dx = cutX ? (q.lrx - r.lrx) : (q.ulx - r.ulx);
                         const int32_t dy = cutY ? (q.lry - r.lry) : (q.uly - r.uly);
                         const bool sameSize = (cutX || ((q.lrx - q.ulx) == (r.lrx - r.ulx))) && (cutY || ((q.lry - q.uly) == (r.lry - r.uly)));
-                        if (sameSize && (abs(dx) <= MaxDelta) && (abs(dy) <= MaxDelta) && (prevRects[i]->shaderDesc.hash() == shaderHash) && (rectTextureKey(prevWorkload, *prevRects[i]) == textureKey)) {
+                        const int32_t dx2 = (sameSize || !untextured) ? dx : (q.lrx - r.lrx);
+                        const int32_t dy2 = (sameSize || !untextured) ? dy : (q.lry - r.lry);
+                        if ((sameSize || untextured) && (abs(dx) <= MaxDelta) && (abs(dy) <= MaxDelta) && (abs(dx2) <= MaxDelta) && (abs(dy2) <= MaxDelta) &&
+                            (prevRects[i]->shaderDesc.hash() == shaderHash) && (rectTextureKey(prevWorkload, *prevRects[i]) == textureKey))
+                        {
                             call.rectLerpDesc.dx = dx;
                             call.rectLerpDesc.dy = dy;
+                            call.rectLerpDesc.dx2 = dx2;
+                            call.rectLerpDesc.dy2 = dy2;
                             cursor = i + 1;
                             break;
                         }

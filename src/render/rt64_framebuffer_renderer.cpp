@@ -1677,9 +1677,9 @@ namespace RT64 {
                             const int32_t lerpX = int32_t(lroundf(call.rectLerpDesc.dx * towardsPrev / 4.0f)) * 4;
                             const int32_t lerpY = int32_t(lroundf(call.rectLerpDesc.dy * towardsPrev / 4.0f)) * 4;
                             lerpRect.ulx += lerpX;
-                            lerpRect.lrx += lerpX;
                             lerpRect.uly += lerpY;
-                            lerpRect.lry += lerpY;
+                            lerpRect.lrx += int32_t(lroundf(call.rectLerpDesc.dx2 * towardsPrev / 4.0f)) * 4;
+                            lerpRect.lry += int32_t(lroundf(call.rectLerpDesc.dy2 * towardsPrev / 4.0f)) * 4;
 
                             RenderViewport viewportRect = convertViewportRect(lerpRect, p.resolutionScale, p.fbWidth, invRatioScale, extOriginPercentage, horizontalMisalignment, call.callDesc.rectLeftOrigin, call.callDesc.rectRightOrigin);
                             triangles.screenScale = { viewportRect.width / framebuffer.viewport.width, viewportRect.height / framebuffer.viewport.height };

@@ -40,6 +40,9 @@ namespace RT64 {
         struct {
             int32_t dx = 0;
             int32_t dy = 0;
+            // Offset of the lower right corner: differs from dx / dy only for untextured rects that change size (animated boxes).
+            int32_t dx2 = 0;
+            int32_t dy2 = 0;
         } rectLerpDesc;
     };
 };
