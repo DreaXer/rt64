@@ -85,8 +85,7 @@ namespace RT64 {
         }
 
         // Dump the RDRAM last loaded into the TMEM address pointed to by the tile. Required for generating hashes used by Rice.
-        const LoadOperation &loadOp = state->rdp->rice.lastLoadOpByTMEM[loadTile.tmem];
-        uint32_t rdramStart = loadOp.texture.address;
+        const LoadOperation &loadOp = state->rdp->rice.lastLoadOpByTMEM[loadTile.tmem];        uint32_t rdramStart = loadOp.texture.address;
         uint32_t rdramCount = 0;
         uint32_t commonBytesOffset = (loadOp.tile.uls >> 2) << loadOp.texture.siz >> 1;
         uint32_t commonBytesPerRow = loadOp.texture.width << loadOp.texture.siz >> 1;
